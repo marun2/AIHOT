@@ -1,0 +1,41 @@
+# 自动部署：main 分支上的测试（Check）通过后，通过 SSH 让服务器拉取最新代码、重新构建并重启。
+# 也可以在 Actions → 部署 → Run workflow 手动触发。
+# 需要在仓库 Settings → Secrets and variables → Actions 里配置三个 Secret，见 deploy/自动部署.md：
+#   DEPLOY_SSH_KEY、DEPLOY_KNOWN_HOSTS、DEPLOY_HOST
+name: 部署
+
+on:
+  workflow_run:
+    workflows: [Check]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # 只在自己的仓库里部署；测试没通过就不部署。
+    if: >-
+      github.repository == 'marun2/AIHOT' &&
+      (github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: 通过 SSH 触发服务器部署
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          # 服务器把这把钥匙限定为只能运行 deploy/remote-deploy.sh，这里传什么命令都会被忽略。
+          ssh -i ~/.ssh/deploy_key -o IdentitiesOnly=yes -o ServerAliveInterval=30 "root@${DEPLOY_HOST}" deploy
