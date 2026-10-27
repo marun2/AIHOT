@@ -34,7 +34,12 @@ jobs:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
         run: |
           install -m 700 -d ~/.ssh
-          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          # 私钥可以原样粘贴，也可以是 base64 一行（从网页终端复制多行容易丢换行）。
+          if printf '%s' "$DEPLOY_SSH_KEY" | grep -q 'BEGIN'; then
+            printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          else
+            printf '%s' "$DEPLOY_SSH_KEY" | tr -d ' \r\n' | base64 -d > ~/.ssh/deploy_key
+          fi
           chmod 600 ~/.ssh/deploy_key
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
           # 服务器把这把钥匙限定为只能运行 deploy/remote-deploy.sh，这里传什么命令都会被忽略。
