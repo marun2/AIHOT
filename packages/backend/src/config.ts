@@ -42,6 +42,8 @@ export const config = {
   // Every generated absolute link uses this address, whatever Host a request arrives with.
   siteUrl: str("SITE_URL", SITE.defaultUrl).replace(/\/+$/, ""),
   egressProxyUrl: env.EGRESS_PROXY_URL || null,
+  /** Fewest minutes between two reads of any one source (0: no floor beyond the daily tuning). */
+  collectMinIntervalMinutes: Math.max(0, int("COLLECT_MIN_INTERVAL_MINUTES", 0)),
   allowPrivateNetworkFetch: bool("ALLOW_PRIVATE_NETWORK_FETCH", false),
   /** Whole host names of self-hosted feed services on private addresses; only listing fetches use them. */
   privateFeedHosts: (env.PRIVATE_FEED_HOSTS || "").split(",").map((v) => v.trim().toLowerCase()).filter(Boolean),

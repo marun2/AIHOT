@@ -1,5 +1,6 @@
 // Collection run for one source: fetch listing → filter → store material → enqueue processing.
 // A failed fetch never advances the success cursor; the source's health reflects consecutive failures.
+import { config } from "../config.ts";
 import { sql, type Db } from "../db.ts";
 import { fillScheduledPublications, identityKeyFor, reuseExternalMaterialIdentities, STALE_ON_DISCOVERY_MS, upsertMaterial } from "../content/materials.ts";
 import { PresentationMismatch } from "../content/presentation.ts";
@@ -259,7 +260,7 @@ async function recordFetch(db: Db, sourceId: string, runId: number, run: { found
     await db`
       UPDATE sources SET last_fetch_at = now(), last_ok_at = now(), fail_count = 0, last_error = NULL,
         health = 'ok', cursor = ${db.json(run.cursor as never)}, updated_at = now(),
-        next_fetch_at = now() + make_interval(mins => interval_minutes)
+        next_fetch_at = now() + make_interval(mins => GREATEST(interval_minutes, ${config.collectMinIntervalMinutes}))
       WHERE id = ${sourceId}`;
     await db`UPDATE fetch_runs SET status = 'ok', finished_at = now(), found_count = ${run.found}, new_count = ${run.created},
       detail = nullif(coalesce(detail,'{}'::jsonb) || coalesce(${detail}::jsonb,'{}'::jsonb),'{}'::jsonb) WHERE id = ${runId}`;
@@ -270,7 +271,7 @@ async function recordFetch(db: Db, sourceId: string, runId: number, run: { found
       fail_count = CASE WHEN ${run.budget} THEN fail_count ELSE fail_count + 1 END,
       last_error = ${run.error},
       health = CASE WHEN ${run.budget} THEN health WHEN fail_count + 1 >= 5 THEN 'failing' ELSE 'degraded' END,
-      next_fetch_at = now() + make_interval(mins => CASE WHEN ${run.budget} THEN 15 ELSE LEAST(interval_minutes * (fail_count + 2), 360) END),
+      next_fetch_at = now() + make_interval(mins => CASE WHEN ${run.budget} THEN 15 ELSE LEAST(GREATEST(interval_minutes, ${config.collectMinIntervalMinutes}) * (fail_count + 2), GREATEST(360, ${config.collectMinIntervalMinutes})) END),
       updated_at = now()
     WHERE id = ${sourceId}`;
   await db`UPDATE fetch_runs SET status = 'failed', finished_at = now(), found_count = ${run.found}, new_count = ${run.created},
@@ -516,7 +517,9 @@ export async function adaptIntervals(): Promise<{ updated: number }> {
     // Listings read through Jina are not looked at more than hourly: busy ones would outrun its daily budget.
     const min = r.paid_listing ? 60 : 15;
     // X accounts read by shard follow the shard's pace, whatever their own volume.
-    const target = shardHandle(r) ? shardMinutes(r.participation_mode) : perDay <= 0.15 ? max : Math.round(Math.min(max, Math.max(min, (24 * 60) / (perDay * 3))));
+    const tuned = shardHandle(r) ? shardMinutes(r.participation_mode) : perDay <= 0.15 ? max : Math.round(Math.min(max, Math.max(min, (24 * 60) / (perDay * 3))));
+    // The site's floor (COLLECT_MIN_INTERVAL_MINUTES) wins over the tuning: never read a source more often.
+    const target = Math.max(tuned, config.collectMinIntervalMinutes);
     const res = await sql`UPDATE sources SET interval_minutes = ${target} WHERE id = ${r.id} AND interval_minutes <> ${target}`;
     updated += res.count;
   }
